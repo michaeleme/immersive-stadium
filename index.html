@@ -1,0 +1,782 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Stadium Atmosphere: Match Night to Dawn</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
+    #scene-container { width: 100%; height: 100%; }
+  </style>
+</head>
+<body>
+  <div id="scene-container"></div>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/"
+      }
+    }
+  </script>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+    const container = document.getElementById("scene-container");
+
+    // State management for scene transitions
+    let time = 0;
+    let phase = 0; // 0 = night, 1 = dawn
+    let experienceStarted = false;
+    let transitioningToDawn = false;
+    let crowdDuration = 0;
+
+    // Scene setup
+    const scene = new THREE.Scene();
+    scene.background = null;
+    const fogColor = new THREE.Color(0xffaa88);
+    scene.fog = new THREE.Fog(fogColor, 30, 120);
+
+    // Camera positioned at eye level on field
+    const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera.position.set(0, 1.8, 10);
+
+    // Web Audio API setup for crowd and nature sounds
+    const listener = new THREE.AudioListener();
+    camera.add(listener);
+
+    const sound = new THREE.Audio(listener);
+    const audioLoader = new THREE.AudioLoader();
+    audioLoader.load('https://raw.githubusercontent.com/michaeleme/stadium-atmosphere/main/crowd.mp3', function(buffer) {
+      sound.setBuffer(buffer);
+      sound.setLoop(false);
+      sound.setVolume(0.5);
+      crowdDuration = buffer.duration;
+    });
+
+    const natureSound = new THREE.Audio(listener);
+    const natureLoader = new THREE.AudioLoader();
+    natureLoader.load('https://raw.githubusercontent.com/michaeleme/stadium-atmosphere/main/nature.mp3', function(buffer) {
+      natureSound.setBuffer(buffer);
+      natureSound.setLoop(false);
+      natureSound.setVolume(0.5);
+    });
+
+    // Renderer with shadow support
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.shadowMap.enabled = true;
+    container.appendChild(renderer.domElement);
+
+    // OrbitControls for 360 rotation and limited user interaction
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.target.set(0, 5, 0);
+    controls.enableDamping = true;
+    controls.autoRotate = true;
+    controls.autoRotateSpeed = 0.5;
+    controls.enablePan = false;
+    controls.minDistance = 20;
+    controls.maxDistance = 30;
+    controls.minPolarAngle = Math.PI / 4;
+    controls.maxPolarAngle = Math.PI / 2.2;
+    controls.enableRotate = true;
+    controls.rotateSpeed = 0.5;
+
+    // Lighting setup
+    const hemiLight = new THREE.HemisphereLight(0xffeedd, 0x997755, 0.6);
+    scene.add(hemiLight);
+
+    const ambient = new THREE.AmbientLight(0xffffff, 0.2);
+    scene.add(ambient);
+
+    const sunLight = new THREE.DirectionalLight(0xfff2c0, 1.2);
+    sunLight.position.set(-50, 25, 50);
+    sunLight.castShadow = true;
+    sunLight.shadow.mapSize.set(2048, 2048);
+    scene.add(sunLight);
+
+    const sunGeom = new THREE.SphereGeometry(8, 32, 32);
+    const sunMat = new THREE.MeshBasicMaterial({ color: 0xffdd88 });
+    const sun = new THREE.Mesh(sunGeom, sunMat);
+    sun.position.set(-50, 25, 50);
+    scene.add(sun);
+
+    const moonGeom = new THREE.SphereGeometry(6, 32, 32);
+    const moonMat = new THREE.MeshBasicMaterial({ color: 0xddddff });
+    const moon = new THREE.Mesh(moonGeom, moonMat);
+    moon.position.set(50, 30, -40);
+    scene.add(moon);
+
+    // Stadium spotlights (4 corners)
+    const spotlights = [];
+
+    function createSpotlight(x, z) {
+      const spotlight = new THREE.SpotLight(0xffffdd, 800);
+      spotlight.position.set(x, 40, z);
+      spotlight.target.position.set(0, 0, 0);
+      spotlight.angle = Math.PI / 6;
+      spotlight.penumbra = 0.3;
+      spotlight.decay = 2;
+      spotlight.distance = 200;
+      spotlight.castShadow = true;
+      spotlight.shadow.mapSize.set(1024, 1024);
+
+      scene.add(spotlight);
+      scene.add(spotlight.target);
+      spotlights.push(spotlight);
+
+      const poleGeom = new THREE.CylinderGeometry(0.5, 0.5, 40, 8);
+      const poleMat = new THREE.MeshStandardMaterial({ color: 0x333333 });
+      const pole = new THREE.Mesh(poleGeom, poleMat);
+      pole.position.set(x, 20, z);
+      scene.add(pole);
+
+      const fixtureGeom = new THREE.BoxGeometry(3, 2, 3);
+      const fixtureMat = new THREE.MeshStandardMaterial({
+        color: 0x222222,
+        emissive: 0xffffaa,
+        emissiveIntensity: 0.5
+      });
+      const fixture = new THREE.Mesh(fixtureGeom, fixtureMat);
+      fixture.position.set(x, 40, z);
+      scene.add(fixture);
+    }
+
+    const cornerDist = 60;
+    createSpotlight(cornerDist, cornerDist);
+    createSpotlight(-cornerDist, cornerDist);
+    createSpotlight(cornerDist, -cornerDist);
+    createSpotlight(-cornerDist, -cornerDist);
+
+    // Sky dome with custom gradient shader (night to dawn transition)
+    const skyGeom = new THREE.SphereGeometry(400, 32, 32);
+    const skyMat = new THREE.ShaderMaterial({
+      uniforms: {
+        topColor: { value: new THREE.Color(0x5599dd) },
+        horizonColor: { value: new THREE.Color(0xff8844) },
+        offset: { value: 0 },
+        exponent: { value: 0.8 }
+      },
+      vertexShader: `
+        varying vec3 vWorldPosition;
+        void main() {
+          vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+          vWorldPosition = worldPosition.xyz;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform vec3 topColor;
+        uniform vec3 horizonColor;
+        uniform float offset;
+        uniform float exponent;
+        varying vec3 vWorldPosition;
+        void main() {
+          float h = normalize(vWorldPosition).y;
+          gl_FragColor = vec4(mix(horizonColor, topColor, max(pow(max(h, 0.0), exponent), 0.0)), 1.0);
+        }
+      `,
+      side: THREE.BackSide
+    });
+    const sky = new THREE.Mesh(skyGeom, skyMat);
+    scene.add(sky);
+
+    // Breeze particles (dawn scene)
+    const particleCount = 200;
+    const particleGeometry = new THREE.BufferGeometry();
+    const particlePositions = new Float32Array(particleCount * 3);
+
+    for (let i = 0; i < particleCount; i++) {
+      particlePositions[i * 3] = (Math.random() - 0.5) * 150;
+      particlePositions[i * 3 + 1] = Math.random() * 20 + 2;
+      particlePositions[i * 3 + 2] = (Math.random() - 0.5) * 100;
+    }
+
+    particleGeometry.setAttribute('position', new THREE.BufferAttribute(particlePositions, 3));
+    const particleMaterial = new THREE.PointsMaterial({
+      color: 0xffffee,
+      size: 0.4,
+      transparent: true,
+      opacity: 0.6,
+      sizeAttenuation: true
+    });
+    const particles = new THREE.Points(particleGeometry, particleMaterial);
+    scene.add(particles);
+
+    // Stars (night scene)
+    const starCount = 1000;
+    const starGeometry = new THREE.BufferGeometry();
+    const starPositions = new Float32Array(starCount * 3);
+
+    for (let i = 0; i < starCount; i++) {
+      const radius = 350;
+      const theta = Math.random() * Math.PI * 2;
+      const phi = Math.random() * Math.PI / 2;
+
+      starPositions[i * 3] = radius * Math.sin(phi) * Math.cos(theta);
+      starPositions[i * 3 + 1] = radius * Math.cos(phi);
+      starPositions[i * 3 + 2] = radius * Math.sin(phi) * Math.sin(theta);
+    }
+
+    starGeometry.setAttribute('position', new THREE.BufferAttribute(starPositions, 3));
+    const starMaterial = new THREE.PointsMaterial({
+      color: 0xffffff,
+      size: 3.5,
+      transparent: true,
+      opacity: 1.0,
+      sizeAttenuation: false
+    });
+    const stars = new THREE.Points(starGeometry, starMaterial);
+    scene.add(stars);
+
+    // Rain particles (night scene)
+    const rainCount = 1500;
+    const rainGeometry = new THREE.BufferGeometry();
+    const rainPositions = new Float32Array(rainCount * 3);
+    const rainVelocities = new Float32Array(rainCount);
+
+    for (let i = 0; i < rainCount; i++) {
+      rainPositions[i * 3] = (Math.random() - 0.5) * 200;
+      rainPositions[i * 3 + 1] = Math.random() * 80;
+      rainPositions[i * 3 + 2] = (Math.random() - 0.5) * 150;
+      rainVelocities[i] = Math.random() * 0.5 + 0.5;
+    }
+
+    rainGeometry.setAttribute('position', new THREE.BufferAttribute(rainPositions, 3));
+    const rainMaterial = new THREE.PointsMaterial({
+      color: 0xaaaaaa,
+      size: 0.3,
+      transparent: true,
+      opacity: 0.6
+    });
+    const rain = new THREE.Points(rainGeometry, rainMaterial);
+    scene.add(rain);
+
+    // Flying birds for dawn scene
+    const birdCount = 5;
+    const birds = [];
+
+    function createBird(x, y, z) {
+      const birdGroup = new THREE.Group();
+
+      const bodyGeom = new THREE.SphereGeometry(0.3, 8, 8);
+      const bodyMat = new THREE.MeshBasicMaterial({ color: 0x222222 });
+      const body = new THREE.Mesh(bodyGeom, bodyMat);
+      birdGroup.add(body);
+
+      const wingGeom = new THREE.ConeGeometry(0.4, 1, 3);
+      const wingMat = new THREE.MeshBasicMaterial({ color: 0x333333 });
+
+      const leftWing = new THREE.Mesh(wingGeom, wingMat);
+      leftWing.rotation.z = Math.PI / 2;
+      leftWing.position.set(-0.5, 0, 0);
+      birdGroup.add(leftWing);
+
+      const rightWing = new THREE.Mesh(wingGeom, wingMat);
+      rightWing.rotation.z = -Math.PI / 2;
+      rightWing.position.set(0.5, 0, 0);
+      birdGroup.add(rightWing);
+
+      birdGroup.position.set(x, y, z);
+      birdGroup.visible = false;
+      scene.add(birdGroup);
+
+      return { group: birdGroup, leftWing, rightWing, startTime: null };
+    }
+
+    for (let i = 0; i < birdCount; i++) {
+      const x = -100 - i * 5;
+      const y = 15 + Math.random() * 10;
+      const z = -20 + Math.random() * 40;
+      birds.push(createBird(x, y, z));
+    }
+
+    // Field dimensions
+    const FIELD_WIDTH = 105;
+    const FIELD_HEIGHT = 68;
+    const TOUCHLINE_RUNOFF = 25;
+
+    // Grass texture with stripes
+    function makeGrassPattern() {
+      const size = 256;
+      const canvas = document.createElement("canvas");
+      canvas.width = canvas.height = size;
+      const ctx = canvas.getContext("2d");
+
+      const color1 = "#2d5016";
+      const color2 = "#3d6620";
+
+      const stripeWidth = size / 8;
+      for (let i = 0; i < 8; i++) {
+        ctx.fillStyle = (i % 2 === 0) ? color1 : color2;
+        ctx.fillRect(i * stripeWidth, 0, stripeWidth, size);
+      }
+      return canvas;
+    }
+
+    const grassTexture = new THREE.CanvasTexture(makeGrassPattern());
+    grassTexture.wrapS = grassTexture.wrapT = THREE.RepeatWrapping;
+    grassTexture.repeat.set(4, 4);
+
+    const fieldGeom = new THREE.PlaneGeometry(FIELD_HEIGHT, FIELD_WIDTH + 2 * TOUCHLINE_RUNOFF);
+
+    // Custom grass shader with wave animation (vertex displacement)
+    const fieldMat = new THREE.ShaderMaterial({
+      uniforms: {
+        grassTexture: { value: grassTexture },
+        time: { value: 0 },
+        waveStrength: { value: 1.5 },
+        waveSpeed: { value: 2.0 }
+      },
+      vertexShader: `
+        uniform float time;
+        uniform float waveStrength;
+        uniform float waveSpeed;
+        varying vec2 vUv;
+        
+        void main() {
+          vUv = uv;
+          vec3 pos = position;
+          
+          // Sine wave animation for grass movement
+          float wave = sin(pos.x * 0.5 + time * waveSpeed) * cos(pos.z * 0.5 + time * waveSpeed * 0.7);
+          pos.y += wave * waveStrength;
+          
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform sampler2D grassTexture;
+        varying vec2 vUv;
+        
+        void main() {
+          gl_FragColor = texture2D(grassTexture, vUv);
+        }
+      `
+    });
+
+    const field = new THREE.Mesh(fieldGeom, fieldMat);
+    field.rotation.x = -Math.PI / 2;
+    field.receiveShadow = true;
+    scene.add(field);
+
+    const groundGeom = new THREE.PlaneGeometry(300, 300);
+    const groundMat = new THREE.MeshLambertMaterial({ color: 0x2d5016 });
+    const ground = new THREE.Mesh(groundGeom, groundMat);
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.y = -0.1;
+    ground.receiveShadow = true;
+    scene.add(ground);
+
+    // Field lines
+    const lineMaterial = new THREE.LineBasicMaterial({ color: 0xffffff });
+    const LINE_Y = 0.05;
+
+    function addRectangle(width, height, centerZ = 0) {
+      const hw = width / 2;
+      const hh = height / 2;
+      const zOffset = centerZ;
+
+      const points = [
+        new THREE.Vector3(-hw, LINE_Y, -hh + zOffset),
+        new THREE.Vector3(hw, LINE_Y, -hh + zOffset),
+        new THREE.Vector3(hw, LINE_Y, hh + zOffset),
+        new THREE.Vector3(-hw, LINE_Y, hh + zOffset),
+        new THREE.Vector3(-hw, LINE_Y, -hh + zOffset)
+      ];
+
+      const geometry = new THREE.BufferGeometry().setFromPoints(points);
+      const line = new THREE.Line(geometry, lineMaterial);
+      scene.add(line);
+    }
+
+    function addLine(x1, z1, x2, z2) {
+      const points = [
+        new THREE.Vector3(x1, LINE_Y, z1),
+        new THREE.Vector3(x2, LINE_Y, z2)
+      ];
+      const geometry = new THREE.BufferGeometry().setFromPoints(points);
+      const line = new THREE.Line(geometry, lineMaterial);
+      scene.add(line);
+    }
+
+    function addCircle(radius, segments = 64) {
+      const points = [];
+      for (let i = 0; i <= segments; i++) {
+        const t = (i / segments) * Math.PI * 2;
+        const x = Math.cos(t) * radius;
+        const z = Math.sin(t) * radius;
+        points.push(new THREE.Vector3(x, LINE_Y, z));
+      }
+      const geometry = new THREE.BufferGeometry().setFromPoints(points);
+      const line = new THREE.Line(geometry, lineMaterial);
+      scene.add(line);
+    }
+
+    addRectangle(FIELD_WIDTH, FIELD_HEIGHT);
+    addLine(-FIELD_WIDTH / 2, 0, FIELD_WIDTH / 2, 0);
+    addCircle(9.15);
+
+    const spotGeom = new THREE.SphereGeometry(0.3, 16, 16);
+    const spotMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    const centerSpot = new THREE.Mesh(spotGeom, spotMat);
+    centerSpot.position.set(0, 0.3, 0);
+    scene.add(centerSpot);
+
+    const penaltyDepth = 16.5;
+    const penaltyWidth = 40.32;
+    const goalDepth = 5.5;
+    const goalWidth = 18.32;
+    const halfHeight = FIELD_HEIGHT / 2;
+
+    addRectangle(penaltyWidth, penaltyDepth, halfHeight - penaltyDepth / 2);
+    addRectangle(penaltyWidth, penaltyDepth, -halfHeight + penaltyDepth / 2);
+    addRectangle(goalWidth, goalDepth, halfHeight - goalDepth / 2);
+    addRectangle(goalWidth, goalDepth, -halfHeight + goalDepth / 2);
+
+    // Goal nets
+    function createNet(goalWidth, goalHeight, depth, zSide) {
+      const netMaterial = new THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        transparent: true,
+        opacity: 0.3,
+        side: THREE.DoubleSide
+      });
+
+      const backNet = new THREE.PlaneGeometry(goalWidth, goalHeight);
+      const backMesh = new THREE.Mesh(backNet, netMaterial);
+
+      const sideNet = new THREE.PlaneGeometry(depth, goalHeight);
+      const leftMesh = new THREE.Mesh(sideNet, netMaterial);
+      const rightMesh = new THREE.Mesh(sideNet, netMaterial);
+
+      const topNet = new THREE.PlaneGeometry(goalWidth, depth);
+      const topMesh = new THREE.Mesh(topNet, netMaterial);
+
+      const z = zSide * (halfHeight + 0.1);
+
+      backMesh.position.set(0, goalHeight / 2, z - zSide * depth);
+
+      leftMesh.position.set(-goalWidth / 2, goalHeight / 2, z - zSide * (depth / 2));
+      leftMesh.rotation.y = Math.PI / 2;
+
+      rightMesh.position.set(goalWidth / 2, goalHeight / 2, z - zSide * (depth / 2));
+      rightMesh.rotation.y = Math.PI / 2;
+
+      topMesh.position.set(0, goalHeight, z - zSide * (depth / 2));
+      topMesh.rotation.x = Math.PI / 2;
+
+      scene.add(backMesh, leftMesh, rightMesh, topMesh);
+    }
+
+    // Goals with cylindrical posts
+    function addGoal(zSide) {
+      const goalWidth = 7.32;
+      const goalHeight = 2.44;
+      const depth = 2.5;
+      const postRadius = 0.12;
+
+      const postMaterial = new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        metalness: 0.3,
+        roughness: 0.4
+      });
+
+      const postGeom = new THREE.CylinderGeometry(postRadius, postRadius, goalHeight, 16);
+      const leftPost = new THREE.Mesh(postGeom, postMaterial);
+      const rightPost = new THREE.Mesh(postGeom, postMaterial);
+
+      const crossbarGeom = new THREE.CylinderGeometry(postRadius, postRadius, goalWidth, 16);
+      const crossbar = new THREE.Mesh(crossbarGeom, postMaterial);
+      crossbar.rotation.z = Math.PI / 2;
+
+      const backPostGeom = new THREE.CylinderGeometry(postRadius, postRadius, goalHeight, 16);
+      const backLeft = new THREE.Mesh(backPostGeom, postMaterial);
+      const backRight = new THREE.Mesh(backPostGeom, postMaterial);
+
+      const backTopGeom = new THREE.CylinderGeometry(postRadius, postRadius, goalWidth, 16);
+      const backTop = new THREE.Mesh(backTopGeom, postMaterial);
+      backTop.rotation.z = Math.PI / 2;
+
+      const z = zSide * (halfHeight + 0.1);
+
+      leftPost.position.set(-goalWidth / 2, goalHeight / 2, z);
+      rightPost.position.set(goalWidth / 2, goalHeight / 2, z);
+      crossbar.position.set(0, goalHeight, z);
+
+      backLeft.position.set(-goalWidth / 2, goalHeight / 2, z - zSide * depth);
+      backRight.position.set(goalWidth / 2, goalHeight / 2, z - zSide * depth);
+      backTop.position.set(0, goalHeight, z - zSide * depth);
+
+      [leftPost, rightPost, crossbar, backLeft, backRight, backTop].forEach(mesh => {
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+      });
+
+      scene.add(leftPost, rightPost, crossbar, backLeft, backRight, backTop);
+      createNet(goalWidth, goalHeight, depth, zSide);
+    }
+
+    addGoal(1);
+    addGoal(-1);
+
+    // Stadium stands (tiered seating)
+    function createStands() {
+      const SIDE_GAP = 2;
+      const steps = 8;
+      const stepHeight = 1.2;
+      const stepDepth = 2.5;
+      const color = 0x666666;
+
+      const standMat = new THREE.MeshLambertMaterial({ color });
+
+      for (let i = 0; i < steps; i++) {
+        const h = (i + 1) * stepHeight;
+        const d = (i + 1) * stepDepth;
+
+        const geom = new THREE.BoxGeometry(FIELD_WIDTH + 50, stepHeight, stepDepth);
+        const left = new THREE.Mesh(geom, standMat);
+        const right = new THREE.Mesh(geom, standMat);
+
+        left.position.set(0, h / 2, -FIELD_HEIGHT / 2 - SIDE_GAP - d);
+        right.position.set(0, h / 2, FIELD_HEIGHT / 2 + SIDE_GAP + d);
+
+        scene.add(left, right);
+      }
+
+      for (let i = 0; i < steps; i++) {
+        const h = (i + 1) * stepHeight;
+        const d = (i + 1) * stepDepth;
+
+        const geom = new THREE.BoxGeometry(stepDepth, stepHeight, FIELD_HEIGHT + 50);
+        const near = new THREE.Mesh(geom, standMat);
+        const far = new THREE.Mesh(geom, standMat);
+
+        near.position.set(-FIELD_WIDTH / 2 - TOUCHLINE_RUNOFF - d, h / 2, 0);
+        far.position.set(FIELD_WIDTH / 2 + TOUCHLINE_RUNOFF + d, h / 2, 0);
+
+        scene.add(near, far);
+      }
+    }
+    createStands();
+
+    // Team benches
+    function addTeamBenchOnTouchline(sideX, zPos) {
+      const bench = new THREE.Group();
+
+      const benchLength = 10;
+      const benchDepth = 1.4;
+      const seatHeight = 0.45;
+      const backHeight = 1.2;
+      const roofHeight = 1.8;
+
+      const frameMat = new THREE.MeshStandardMaterial({ color: 0x333333, metalness: 0.2, roughness: 0.6 });
+      const panelMat = new THREE.MeshStandardMaterial({ color: 0xdddddd, metalness: 0.0, roughness: 0.7 });
+      const seatMat = new THREE.MeshStandardMaterial({ color: 0x1f6feb, metalness: 0.0, roughness: 0.6 });
+
+      const seatGeom = new THREE.BoxGeometry(benchLength, 0.15, benchDepth);
+      const seat = new THREE.Mesh(seatGeom, seatMat);
+      seat.position.set(0, seatHeight, 0);
+      seat.castShadow = true;
+      seat.receiveShadow = true;
+      bench.add(seat);
+
+      const backGeom = new THREE.BoxGeometry(benchLength, backHeight, 0.12);
+      const back = new THREE.Mesh(backGeom, panelMat);
+      back.position.set(0, seatHeight + backHeight / 2, -benchDepth / 2 + 0.06);
+      back.castShadow = true;
+      back.receiveShadow = true;
+      bench.add(back);
+
+      const roofGeom = new THREE.BoxGeometry(benchLength, 0.12, benchDepth + 0.4);
+      const roof = new THREE.Mesh(roofGeom, panelMat);
+      roof.position.set(0, roofHeight, 0);
+      roof.castShadow = true;
+      roof.receiveShadow = true;
+      bench.add(roof);
+
+      const postGeom = new THREE.BoxGeometry(0.12, roofHeight - seatHeight, 0.12);
+      const postXs = [-benchLength / 2 + 0.6, -benchLength / 2 + 1.6, benchLength / 2 - 1.6, benchLength / 2 - 0.6];
+      for (const px of postXs) {
+        const post = new THREE.Mesh(postGeom, frameMat);
+        post.position.set(px, (roofHeight + seatHeight) / 2, -benchDepth / 2 + 0.06);
+        post.castShadow = true;
+        post.receiveShadow = true;
+        bench.add(post);
+      }
+
+      bench.rotation.y = (sideX === 1) ? Math.PI / 2 : -Math.PI / 2;
+
+      const inset = 0.6;
+      const x = sideX * (FIELD_WIDTH / 2 - benchDepth / 2 - inset);
+
+      bench.position.set(x, 0, zPos);
+      scene.add(bench);
+    }
+
+    addTeamBenchOnTouchline(-1, -FIELD_HEIGHT * 0.25);
+    addTeamBenchOnTouchline(-1, FIELD_HEIGHT * 0.25);
+    addTeamBenchOnTouchline(1, -FIELD_HEIGHT * 0.25);
+    addTeamBenchOnTouchline(1, FIELD_HEIGHT * 0.25);
+
+    // Spacebar to start experience
+    window.addEventListener('keydown', (e) => {
+      if (e.code === 'Space' && !experienceStarted) {
+        experienceStarted = true;
+        controls.autoRotate = true;
+
+        // Play last 50% of crowd audio
+        const halfDuration = crowdDuration * 0.5;
+        const startTime = crowdDuration * 0.5;
+
+        sound.play(0, startTime);
+
+        setTimeout(() => {
+          sound.stop();
+        }, halfDuration * 1000);
+      }
+    });
+
+    // Main animation loop
+    function animate() {
+      requestAnimationFrame(animate);
+
+      time += 0.016;
+
+      // Check if crowd audio finished, trigger transition to dawn
+      if (experienceStarted && !transitioningToDawn) {
+        if (sound.isPlaying === false && phase === 0) {
+          transitioningToDawn = true;
+          natureSound.play();
+        }
+      }
+
+      // Smooth phase transition (night → dawn)
+      if (transitioningToDawn) {
+        phase += 0.005;
+        if (phase >= 1) {
+          phase = 1;
+        }
+      }
+
+      // Audio crossfade during transition
+      if (transitioningToDawn) {
+        sound.setVolume((1 - phase) * 0.5);
+        natureSound.setVolume(phase * 0.5);
+      }
+
+      // Update grass wave animation
+      fieldMat.uniforms.time.value = time;
+
+      if (phase < 0.7) {
+        fieldMat.uniforms.waveStrength.value = 2.5;
+        fieldMat.uniforms.waveSpeed.value = 3.0;
+      } else {
+        fieldMat.uniforms.waveStrength.value = 1.5;
+        fieldMat.uniforms.waveSpeed.value = 2.0;
+      }
+
+      // Sky gradient interpolation
+      const nightTopColor = new THREE.Color(0x000033);
+      const dawnTopColor = new THREE.Color(0x5599dd);
+      const nightHorizonColor = new THREE.Color(0x1a1a2e);
+      const dawnHorizonColor = new THREE.Color(0xff8844);
+
+      skyMat.uniforms.topColor.value.lerpColors(nightTopColor, dawnTopColor, phase);
+      skyMat.uniforms.horizonColor.value.lerpColors(nightHorizonColor, dawnHorizonColor, phase);
+
+      // Phase-based visibility
+      particles.visible = phase > 0.3;
+      stars.visible = phase < 0.7;
+      moon.visible = phase < 0.7;
+      sun.visible = phase > 0.3;
+
+      spotlights.forEach(light => {
+        light.intensity = phase < 0.7 ? 800 : 0;
+      });
+
+      // Fog adjustments based on phase
+      if (phase === 0) {
+        scene.fog.near = 200;
+        scene.fog.far = 300;
+        scene.fog.color.setHex(0x000000);
+      } else {
+        scene.fog.near = 30;
+        scene.fog.far = 120;
+        scene.fog.color.setHex(0xffaa88);
+      }
+
+      // Animate breeze particles
+      const positions = particles.geometry.attributes.position.array;
+      for (let i = 0; i < particleCount; i++) {
+        positions[i * 3] += 0.05;
+        positions[i * 3 + 1] += Math.sin(time + i) * 0.01;
+
+        if (positions[i * 3] > 75) {
+          positions[i * 3] = -75;
+        }
+      }
+      particles.geometry.attributes.position.needsUpdate = true;
+
+      // Animate rain
+      const rainPos = rain.geometry.attributes.position.array;
+      for (let i = 0; i < rainCount; i++) {
+        rainPos[i * 3 + 1] -= 1.5;
+
+        if (rainPos[i * 3 + 1] < 0) {
+          rainPos[i * 3 + 1] = 80;
+        }
+      }
+      rain.geometry.attributes.position.needsUpdate = true;
+      rain.visible = experienceStarted && phase < 0.7;
+
+      // Birds flying during dawn (looping)
+      if (phase > 0.7) {
+        birds.forEach(bird => {
+          bird.group.visible = true;
+          bird.group.position.x += 0.5;
+
+          const flapSpeed = 10;
+          bird.leftWing.rotation.y = Math.sin(time * flapSpeed) * 0.5;
+          bird.rightWing.rotation.y = -Math.sin(time * flapSpeed) * 0.5;
+
+          // Reset position when off-screen
+          if (bird.group.position.x > 150) {
+            bird.group.position.x = -100 - Math.random() * 25;
+            bird.group.position.y = 15 + Math.random() * 10;
+            bird.group.position.z = -20 + Math.random() * 40;
+          }
+        });
+      } else {
+        birds.forEach(bird => {
+          bird.group.visible = false;
+        });
+      }
+
+      // Camera shake during match (night phase)
+      if (experienceStarted && phase < 0.7) {
+        const shakeIntensity = 0.15 * (1 - phase);
+        camera.position.x += (Math.random() - 0.5) * shakeIntensity;
+        camera.position.y += (Math.random() - 0.5) * shakeIntensity;
+        camera.position.z += (Math.random() - 0.5) * shakeIntensity;
+      }
+
+      controls.update();
+      renderer.render(scene, camera);
+    }
+
+    // Window resize handler
+    window.addEventListener("resize", () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    animate();
+  </script>
+</body>
+</html>
