@@ -8,7 +8,7 @@
 
 ## Description
 
-Stadium Atmosphere is an immersive 3D WebGL experience that captures the contrast between the intense energy of a nighttime soccer match and the peaceful stillness of dawn. Built with Three.js and custom GLSL shaders, this project demonstrates advanced computer graphics techniques including:
+From Roar to Silence is an immersive 3D WebGL experience that captures the contrast between the intense energy of a nighttime soccer match and the peaceful stillness of dawn. Built with Three.js and custom GLSL shaders, this project demonstrates advanced computer graphics techniques including:
 
 - **Custom GLSL Shaders**: Sky gradient shader with fragment shader interpolation, animated grass with vertex displacement
 - **Dynamic Scene Transitions**: Smooth phase-based transitions between night and dawn atmospheres
